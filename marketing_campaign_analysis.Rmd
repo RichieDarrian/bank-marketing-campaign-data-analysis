@@ -1,5 +1,5 @@
 ---
-title: "FinalExam-2802408133-RichieDarrianPrayogo"
+title: "BankMarketingCampaignAnalysis-2802408133-RichieDarrianPrayogo"
 author: "Richie Darrian Prayogo"
 date: "2025-06-20"
 output: 
