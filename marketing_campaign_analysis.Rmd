@@ -1,0 +1,659 @@
+---
+title: "FinalExam-2802408133-RichieDarrianPrayogo"
+author: "Richie Darrian Prayogo"
+date: "2025-06-20"
+output: 
+  html_document:
+    theme: flatly
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 5,
+  fig.height = 7,
+  dev = "png"
+)
+
+library(DT)
+library(dplyr)
+library(ggplot2)
+library(DescTools)
+library(tidyr)
+library(EnvStats)
+library(plotly)
+```
+
+---
+
+Click [here](https://youtu.be/ErsExw6Qd7o) to see video explanation.
+
+---
+
+# Introduction {.tabset}
+This analysis evaluates the performance of recent marketing campaigns conducted by our commercial bank to uncover key patterns, trends, and relationships within the data. The process involves three main tasks:
+
+1. identifying and addressing any data quality issues to ensure a reliable and complete foundation for analysis;
+2. exploring the relationships between key variables such as customer demographics, responses, and campaign outcomes; and
+3. creating interactive visualizations to communicate the insights effectively.
+
+The purpose of this analysis is to inquire data-driven recommendation that can support strategic decision-making and improve the success of future marketing efforts.
+<br><br>
+
+## 1. Data Quality Assessment and Preprocessing 
+Before conducting any meaningful analysis, it is essential to assess and improve the quality of the dataset. First, I will identify common data quality issues. Then, I will clean the data through appropriate techniques. Finally, I will perform an initial exploration of the cleaned data.
+<br><br>
+
+### 1.1. Identifying Data Quality Issues
+In this section, I will examine the dataset to assure the quality of the data before conducting further analysis. This includes identifying missing values, duplicates, outliers, and irrelevant or noisy data. Addressing these issues is critical to ensure accurate and meaningful insights in the next stages of analysis.
+
+``` {r load-data}
+df <- read.csv("data_A.csv")
+
+dim_df = dim(df)
+dup_df = sum(duplicated(df))
+na_df = sum(is.na(df))
+
+cat("DATA OVERVIEW\n",
+    "Number of Rows:", dim_df[1], '\n',
+    "Number of Columns:", dim_df[2], '\n',
+    "Duplicates:", dup_df, '\n',
+    "Missing Values:", na_df, '\n\n'
+    )
+```
+
+The dataset is clear from any duplicates, so there's no need to do any duplicates handling. However, there seems to be some records with missing values and so I'll investigate which column contribute to the missing value count.
+
+``` {r identifying-missing-value}
+cat("TOTAL MISSING VALUES IN EACH COLUMN\n")
+print(sapply(df, function(x) sum(is.na(x))))
+```
+
+It is now clear that the "duration" column has those nine missing values. Is there a cause for those entries to be missing or is it just an unfortunate happenstance? Let's investigate further.
+
+``` {r duration-col-investigation}
+print(df[is.na(df$duration), c("X", "duration", "campaign", "poutcome", "y")], row.names=FALSE)
+```
+
+These nine records which have missing values in the "duration" column have never been contacted in the previous campaign (as seen from the nonexistent outcome in "poutcome" column), but have been contacted in the current campaign. The absence of recorded duration suggests that the contact was unsuccessful (e.g., call not answered), which answers the cause of the missing values. These missing values are a problem because it prevents accurately measuring client engagement during the current campaign, potentially skewing analysis involving call effectiveness or duration-based patterns.
+
+Moving on, I want to get a broader look at each dataset's features by checking the class of each column and the unique categories for each categorical column. Additionally, I'll be able to see if each column is suitable for its corresponding class.
+
+``` {r col-overview}
+for (col in names(df)) {
+  if (col == "X") cat("CLASS OF EACH COLUMN\n\n")
+  col_class <- class(df[[col]])
+  cat(col, ": ", col_class, "\n", sep = "")
+  if (col_class %in% c("character", "factor")) {
+    unique_vals <- sort(unique(df[[col]]))
+    cat("  Unique Categories:\n    - ", paste(unique_vals, collapse = "\n    - "), "\n", sep = "")
+  }
+  
+  cat(strrep("-", 40), "\n")
+}
+```
+Just from this discovery alone, there is a lot of problem in the dataset. Many categorical columns have "unknown" as one of their categories. This category yields no value to analyzing performance of the marketing campaign because it's an absence of value. The "job" column also has an additional useless category which is an empty string ("").
+
+The "default" column has zero "yes" in total. Excluding "unknown", the "default" column only has "no" as its sole categorical value. This makes the whole column redundant and gives no value at all to the analysis.
+
+There is also a feature that is an ordinal variable--variable that have natural order but the distance between categories are not known--but is using the character class, which doesn't have a clear order between categories. This is an important issue because treating an ordinal variable as a character type can potentially mislead to an incorrect analysis or interpretation. That same feature is the "education" column. Its categories should represent a clear ranked progression of academic attainment levels from "illiterate" to "university.degree".
+
+A review of the "month" and "day_of_week" column reveals that there is no campaign activity recorded in January or February, as well as on Saturdays and Sundays. This absence suggests that marketing efforts were not conducted during these periods. Either due to operational policies or strategic decisions. These gaps must be acknowledged when performing any time-based analysis or visualizations as their omission might affect interpretations of trends or temporal patterns.
+
+To finish things off, I'll uncover any noisy or irrelevant values in the dataset using boxplots.
+
+``` {r noisy-investigation}
+long_num_df <- data.frame() 
+
+for (col in names(df)[sapply(df, is.numeric)]) {
+  if (col != "X") {
+    long_num_df <- rbind(long_num_df,
+      data.frame(Variable = col, Value = df[[col]])
+    )
+  }
+}
+
+long_num_df <- long_num_df %>% filter(is.finite(Value))
+
+ggplot(long_num_df, aes(x = Variable, y = Value)) +
+  geom_boxplot(fill = "lightblue") +
+  facet_wrap(~ Variable, scales = "free", ncol = 3) +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+  labs(title = "Boxplots of Numeric Variables", x = NULL, y = "Value")
+```
+
+There are several outliers in "age", "campaign", and "duration" column; however these don't significantly impact the analysis. The key issue lies in the "pdays" column. According to the dataset documentation, a value of 999 in "pdays" which indicates clients who weren't contacted in the previous campaign. This special value introduces noise into the data as it dominates the distribution and overshadows the meaningful variation in other "pdays" values. This is problematic because "pdays" has the potential to provide valuable insights into how recent contact influences a client's response.
+<br><br>
+
+### 1.2. Handling Data Quality Issues
+
+To address the data quality issues identified, several preprocessing steps will be taken. The "default" column will be dropped entirely because it only contains the categories "no" and "unknown", offering no meaningful variation or predictive value. Since it does not contribute new or useful information to the analysis, it was deemed redundant. Similarly, the "X" column will be removed as well because it only serves as a unique identifier for each record.
+
+Given that some clients were not engaged in any meaningful interaction and represent only a small fraction of the dataset, I will remove records with missing values in the "duration" column to ensure that the analysis remains focused on clients who were successfully reached and could potentially be influenced by the campaign.
+
+Next, all occurrences of "unknown" and empty strings ("") in categorical variables will be recoded as NA. This is done to standardize the representation of missing or unspecified values, making it easier to quantify and handle missingness consistently throughout the dataset.
+
+Rows containing more than 50% missing values will be removed, as they lack sufficient information to be reliable for analysis or imputation. This threshold helps preserve data quality while minimizing the risk of introducing bias through excessive imputation.
+
+For the remaining missing values, imputation will be performed where numerical variables were filled using the median, which is robust to outliers, while categorical variables were imputed using the mode, reflecting the most frequent and likely category. This approach maintains the integrity of the dataset while minimizing the distortion of underlying distributions.
+
+The education column will be converted into a factor to reflect its nature as an ordinal variable. Its categories represent a clear hierarchy of educational attainment, and treating it as a factor allows the plots and tests to recognize and preserve this inherent order in analysis and visualization.
+
+To support time-based analysis and ensure logical sequencing in visualizations, the "month" and "day_of_week" columns will be converted into ordered factors too. Although they are categorical by nature, their values follow a natural calendar order that must be preserved in any time series or trend plot. Without explicitly setting this order, plotting functions may arrange them alphabetically or in any non chronological order which would misrepresent the temporal progression and lead to misleading interpretations. Some months ("jan" and "feb") and some days ("sat" and "sun") won't be added as new categories inside the columns as it will result in empty categories in plots and misleading implications.
+
+Finally, all other categorical variables stored as character types will also be converted to factors. These variables, such as job, marital, housing, etc. represent discrete categories and are better suited as factors rather than character strings. This conversion not only facilitates more meaningful statistical analysis and visualization but also improves computational efficiency by reducing memory usage and clarifying the data's categorical nature.
+
+```{r preprocessing}
+# 1. Drop redundant column
+clean_data <- df %>% select(-c(default, X))
+
+# 2. Remove records with missing values in 'duration'
+clean_data <- clean_data %>% filter(!is.na(duration))
+
+# 3. Recode all "unknown" and "" as NA in character columns
+clean_data <- clean_data %>% mutate(across(where(is.character), ~na_if(.x, "unknown")))
+clean_data <- clean_data %>% mutate(across(where(is.character), ~na_if(.x, "")))
+
+# 4. Drop rows with more than 50% missing values
+thres <- ncol(clean_data) / 2
+clean_data <- clean_data[rowSums(is.na(clean_data)) <= thres, ]
+
+# 5. Impute missing values
+# 5.1. Impute numeric columns with median
+clean_data <- clean_data %>% mutate(across(where(is.numeric), ~ifelse(is.na(.x), median(.x, na.rm = TRUE), .x)))
+# 5.2. Impute categorical columns with mode
+clean_data <- clean_data %>% mutate(across(where(is.character), ~ifelse(is.na(.x), Mode(.x, na.rm = TRUE), .x)))
+
+# 6. Convert to factors
+# 6.1. Convert to ordered factors
+clean_data$education <- factor(clean_data$education, levels = c("illiterate", "basic.4y", "basic.6y", "basic.9y", "high.school", "professional.course", "university.degree"))
+clean_data$month <- factor(clean_data$month, levels = c("mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"))
+clean_data$day_of_week <- factor(clean_data$day_of_week, levels = c("mon", "tue", "wed", "thu", "fri"))
+# 6.2. Convert all other character columns to unordered factors
+clean_data <- clean_data %>%
+  mutate(across(where(is.character), as.factor))
+
+# Overview after cleaning
+dim_clean = dim(clean_data)
+dup_clean = sum(duplicated(clean_data))
+na_clean = sum(is.na(clean_data))
+
+cat("CLEANED DATA OVERVIEW\n",
+    "Number of Rows:", dim_clean[1], '\n',
+    "Number of Columns:", dim_clean[2], '\n',
+    "Duplicates:", dup_clean, '\n',
+    "Missing Values:", na_clean, '\n\n'
+)
+print(summary(clean_data))
+```
+There is an extra duplicate value after preprocessing because two records happen to have the same values after their identifier is dropped so there's no problem.
+
+```{r duplicate-check}
+datatable(clean_data[duplicated(clean_data) | duplicated(clean_data, fromLast = TRUE),], options = list(dom = 't', scrollX = TRUE))
+```
+
+**Note:** The pdays variable will be handled in section 2 instead of section 1 because its special value of 999 (no previous contact) is contextually meaningful and better transformed during feature engineering to create a more interpretable variable for relationship analysis.
+<br><br>
+
+### 1.3. Summary Statistics and Initial Exploration
+To better understand the cleaned data, I'll begin by calculating basic summary statistics such as the mean, median, and standard deviation for the numerical columns. These measures will help understand the general distribution and variability within the dataset.
+
+``` {r numeric-summary}
+numeric_summary <- clean_data %>%
+  select(where(is.numeric)) %>%
+  summarise(across(everything(), list(
+    mean = ~mean(.x, na.rm = TRUE),
+    median = ~median(.x, na.rm = TRUE),
+    sd = ~sd(.x, na.rm = TRUE)
+  ), .names = "{.fn}_{.col}")) %>%
+  pivot_longer(everything(), names_to = "stat_var", values_to = "value") %>%
+  separate(stat_var, into = c("statistic", "variable"), sep = "_", extra = "merge") %>%
+  pivot_wider(names_from = statistic, values_from = value) %>%
+  mutate(across(where(is.numeric), ~round(.x, 2)))
+
+datatable(numeric_summary,
+          caption = "Summary Statistics for Numerical Variables",
+          rownames = FALSE,
+          options = list(dom = 't'))
+```
+Here are the description of the summary statistics calculated:
+
+- The average **client age** is around 40 years with moderate variability, indicating a broad age range among clients.
+- The average **call duration** is about 260 seconds, but a high standard deviation suggests some calls were very short or very long. the median is much lower than the mean though which implies the fact that most calls were relatively short.
+- Clients were typically **contacted** 2-3 times on average during the campaign.
+- The **"pdays"** variable has a median of 999, which means that more than half of the clients were not contacted previously as 999 is a placeholder for that.
+- The **"previous"** variable shows a mean and median of 0 which also supports the fact that most clients had no prior campaign contact.
+
+Next, I'll examine how a key numerical variable variable varies across different categories of a categorical variable. Specifically, I will explore the distribution of "age" across different "job" types, as this can provide insight into how different segments of the population based on occupation are represented in the marketing campaign.
+
+``` {r cat-summary}
+age_by_job <- clean_data %>%
+  group_by(job) %>%
+  summarise(
+    count = n(),
+    mean_age = round(mean(age, na.rm = TRUE), 2),
+    median_age = median(age, na.rm = TRUE),
+    sd_age = round(sd(age, na.rm = TRUE), 2)
+  ) %>%
+  arrange(desc(mean_age))
+
+datatable(age_by_job, caption = "Age Across Jobs Summary Statistics", options = list(dom = 't', scrollX = TRUE, pageLength = 11), rownames = FALSE)
+```
+Here are key points to point out:
+
+- **Retired** clients stand out with the highest average age (~62 years old), which is expected given their employment status.
+- **Students** are the youngest group, averaging just at 26 years old with very low age variability.
+- **Housemaids** also tend to be older with an average age of 46 years old, noticeably higher than most other working groups.
+- The other jobs, like **admin**, **technician**, **blue-collars**, etc. cluster between the early 30s and the late 40s, indicating that the campaign primarily reached middle-aged working individuals.
+
+## 2. Relationship Analysis
+I aim to explore the relationships between selected variables and the campaign outcome to uncover patterns that may influence a client's decision to subscribe. First, I will investigate three variables that could affect the outcome using appropriate statistical tools. Then, I will engineer three new features to better capture meaningful patterns in the data. Finally, I will present interactive visualizations using Plotly to support the analysis and make the findings more insightful.
+<br><br>
+
+### 2.1. Variable Relationships Exploration
+In this section, I explore the relationships between selected variables to identify potential predictors.
+<br>
+
+#### 2.1.1. Call Duration
+First, I want to see whether call duration influences subscription outcome. I will begin by creating a new column called "y_binary", which converts the binary categorical target "y" into numeric format (1 for "yes" and 0 for "no").
+
+``` {r binary-conversion}
+clean_data$y_binary <- ifelse(clean_data$y == "yes", 1, 0)
+```
+
+Before applying correlation analysis, it's important to check whether the numeric variable "duration" meets the assumption of normality. I use a Q-Q Plot to visually inspect the distribution of "duration".
+
+``` {r duration-normality-check}
+qqPlot(
+  clean_data$duration,
+  main = "Q-Q Plot of Duration",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles",
+  distribution = "norm",
+  add.line = TRUE,
+  line.col = "red",
+  line.lwd = 2
+)
+```
+
+Upon inspection, the Q-Q Plot shows significant deviation from the reference line, especially in the upper tail, indicating that the "duration" variable is not normally distributed. Therefore, instead of Pearson's correlation, I proceed with Spearman's rank correlation, which does not assume normality.
+
+
+``` {r duration-correlation}
+print(cor.test(clean_data$duration, clean_data$y_binary, method = "spearman"))
+```
+The Spearman correlation coefficient reveals a moderate positive monotonic relationship between call duration and subscription likelihood (rho = 0.35515). This suggests that generally as the duration of the call increases, the likelihood of a client subscribing also tends to increase though the relationship is not perfectly linear. This reinforces the idea that longer conversations may reflect stronger client engagement, making them a valuable signal in predicting campaign success. The p-value from the test shows that it is statistically significant (p-value < 0.05), providing strong evidence that the correlation is not due to chance.
+<br>
+
+#### 2.1.2. Previous Campaign Outcome
+Second, I want to explore how the outcome of a previous marketing campaign relates to the current subscription status. I will perform a cross-tabulation.
+
+``` {r p-outcome-cross-tabulation}
+poutcome_table <- table(clean_data$poutcome, clean_data$y)
+poutcome_df <- as.data.frame.matrix(poutcome_table)
+poutcome_df$subscription_rate <- round(poutcome_df$yes / (poutcome_df$no + poutcome_df$yes), 4)
+poutcome_df <- poutcome_df[order(-poutcome_df$subscription_rate), ]
+print(poutcome_df)
+```
+Clients whose previous campaign outcome was a success had the highest conversion rate in the current campaign, with ~70% of clients subscribing again. In contrast, those who had no prior contact or a failure in the past showed notably lower success rates. This indicates that prior campaign success is a strong positive signal and suggests that following up with previously successful clients could improve marketing effectiveness.
+<br>
+
+#### 2.1.3. Education
+Third, I want to see how a client's education level might influence their likelihood of subscribing to the term deposit. I will examine it using a cross-tabulation.
+
+``` {r education-cross-tabulation}
+rev_education <- rev_education <- factor(clean_data$education, levels = rev(levels(clean_data$education)))
+education_table <- table(rev_education, clean_data$y)
+education_df <- as.data.frame.matrix(education_table)
+education_df$subscription_rate <- round(education_df$yes / (education_df$no + education_df$yes), 4)
+print(education_df)
+
+```
+
+Here are the key patterns:
+
+- Clients with a **university degree** have the highest subscription rate (~15%) indicating that higher educational attainment is associated with greater engagement in financial products.
+- Those with a **professional course** and **high school education** also show relatively high subscription rates, suggesting that individuals with secondary and vocational education are reasonably responsive to the campaign.
+- Interestingly, subscription rates decrease progressively through basic education levels, from **4 years of basic education** to **9 years of basic education**.
+- The **illiterate** group shows no subscription, though this could be due to the extremely small sample size with only 3 individuals.
+
+Because I'm curious why subscription rates decrease through basic education levels, I decided to see the distribution of age across education to get a better look.
+
+``` {r education-summary-statistics}
+age_by_education <- clean_data %>%
+  group_by(education) %>%
+  summarise(
+    count = n(),
+    mean_age = round(mean(age, na.rm = TRUE), 2),
+    median_age = median(age, na.rm = TRUE),
+    sd_age = round(sd(age, na.rm = TRUE), 2)
+  ) %>%
+  arrange(desc(education))
+
+datatable(
+  age_by_education,
+  caption = "Age Across Education Levels Summary Statistics",
+  options = list(dom = 't', scrollX = TRUE, pageLength = 7),
+  rownames = FALSE
+)
+```
+
+It seems that those with only four years of basic education tend to be older, while those with more years of basic education (six or nine years) are generally younger, often in their middle ages. So, it might be that age may play a significant role in influencing subscription behavior among those with lower educational attainment. In contrast, age doesn't seem to affect individuals with higher education attainment.
+<br><br>
+
+### 2.2 Feature Engineering
+In this section, I enhance the dataset by creating three new columns that aim to provide additional insights into client behavior and improve predictive analysis. These engineered features are based on age segmentation, recency of contact, and overall campaign interaction, which are all likely to influence a client's decision to subscribe.
+
+#### 2.2.1. Age Group
+To better understand how different age segments respond to the campaign, I will create an "age_group" column. This categorizes clients into three ordered levels:
+
+- "<30" (younger clients),
+- "30-50" (working-age adults), and
+- ">50" (older clients who might be more focused on savings and retirement planning)
+
+This segmentation is based on the age across jobs summary statistics, where retired clients are around the age of 62, students or youngins at the average age of just 26, and working-age at around the early 30s and late 40s. 
+
+``` {r age-group-engineering}
+clean_data <- clean_data %>%
+  mutate(age_group = case_when(
+    age < 30 ~ "<30",
+    age <= 50 ~ "30-50",
+    age > 50 ~ ">50"
+  ))
+clean_data$age_group <- factor(clean_data$age_group, 
+                               levels = c("<30", "30-50", ">50"), 
+                               ordered = TRUE)
+```
+
+#### 2.2.2. Recency Level
+The "pdays" variable captures the number of days since a client was last contacted in a previous campaign, with a value of 999 indicating no prior contact. To get an idea on how I'm going to divide the recency levels, I decided to look at the distribution of days since last campaign contact.
+
+``` {r pdays-distribution}
+max_y <- max(ggplot_build(
+  ggplot(clean_data[clean_data$pdays != 999, ], aes(x = pdays)) +
+    geom_histogram(binwidth = 1)
+)$data[[1]]$count)
+x_positions <- seq(7, max(clean_data$pdays[clean_data$pdays != 999]), by = 7)
+labels <- paste0(seq_along(x_positions), " week(s)")
+
+ggplot(clean_data[clean_data$pdays != 999, ], aes(x = pdays)) +
+  geom_histogram(binwidth = 1, fill = "lightblue", color = "black") +
+  geom_vline(xintercept = x_positions, linetype = "dashed", color = "red") +
+  annotate("text",
+           x = x_positions,
+           y = max_y,
+           label = labels,
+           angle = 90,
+           vjust = -0.5,
+           size = 3,
+           color = "red") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of pdays (excluding 999)",
+    x = "Days Since Last Campaign Contact",
+    y = "Frequency"
+  )
+
+```
+
+From the distribution above, I created a new categorical variable called "recency_level" defined as the following:
+
+- "never" (pdays = 999 a.k.a. no previous contact),
+- "recent" (pdays <= 7 a.k.a. follow-ups within a week), and
+- "old" (pdays > 7 but < 999)
+
+This classification helps distinguish between first-time and follow-up contacts.
+
+The 7-day cutoff for "recent" is based on the observed distribution, which shows that the majority of prior contacts occurred within the first week. Contacts beyond 7 days are comparatively rare, making "old" an appropriate label for them.
+
+``` {r recency-level-engineering}
+clean_data$recency_level <- ifelse(
+  clean_data$pdays == 999, "never",
+  ifelse(clean_data$pdays <= 7, "recent", "old")
+)
+clean_data$recency_level <- factor(clean_data$recency_level, levels = c("never", "recent", "old"))
+```
+
+
+#### 2.2.3. Total Contact Score
+To capture the overall effort of contact, I will create a "total_contact_score" variable that sums up the number of contacts in the current campaign and the previous campaign. This feature provides a single value representing how much outreach effort was invested into each client.
+
+``` {r total-contact-score-engineering}
+clean_data$total_contact_score <- clean_data$campaign + clean_data$previous
+```
+<br>
+
+### 2.3. Interactive Visualizations of Relationships
+In this section, I will present three interactive charts using Plotly to help visually explore key relationships in the dataset. These visualizations aim to enhance understanding by making patterns more apparent and intuitive.
+<br>
+
+#### 2.3.1. Proportion of Subscription by Workforce Category
+To begin, I examined how the proportion of subscriptions varies across different job categories. The goal was to understand which segments of the workforce are more likely to subscribe to the campaign. Before that, I created a contingency table to compute the subscription rate for each individual job.
+
+``` {r job-cross-tabulation}
+job_ct <- clean_data %>%
+  group_by(job, y) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  pivot_wider(names_from = y, values_from = count, values_fill = 0) %>%
+  mutate(
+    subscription_rate = round(yes / (yes + no), 4)
+  ) %>%
+  arrange(desc(subscription_rate))
+
+print(job_ct)
+```
+
+From this table, I observed that certain job types, such as students, retired, and unemployed exhibit clearly distinct subscription rates compared to the rest. From this, I can make out four groups that stand out:
+
+- **Students** with the highest subscription rate, more than double that of most standard job categories.
+- **Retired** individuals which show a significantly elevated subscription rate.
+- **Unemployed** individuals, while lower than the two above, still diverge from the rest and are closer in pattern to "non-working" statuses.
+- The **remaining** job categories all fall within a narrow band of 8%-14%, suggesting similar behavior and campaign responsiveness.
+
+Therefore, to simplify the visualization and highlight more distinct patterns, I grouped all standard working professions to one category, "employed", with similar moderate subscription rates.
+
+``` {r proportional-stacked-bar-chart}
+clean_data <- clean_data %>%
+  mutate(workforce_category = case_when(
+    job %in% c("student", "retired", "unemployed") ~ job,
+    TRUE ~ "employed"
+  ))
+
+job_group_prop <- clean_data %>%
+  group_by(workforce_category, y) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(workforce_category) %>%
+  mutate(proportion = count / sum(count))
+
+job_order <- job_group_prop %>%
+  filter(y == "yes") %>%
+  arrange(proportion) %>%
+  pull(workforce_category)
+
+job_group_prop <- job_group_prop %>%
+  mutate(
+    workforce_category = factor(workforce_category, levels = job_order),
+    y = factor(y, levels = c("yes", "no"))
+  )
+
+plot_ly(job_group_prop,
+        x = ~proportion,
+        y = ~workforce_category,
+        color = ~y,
+        colors = c("no" = "#e51f1f", "yes" = "#44ce1b"),
+        type = 'bar',
+        orientation = 'h') %>%
+  layout(
+    barmode = 'stack',
+    title = "Proportion of Subscription Rate by Workforce Category",
+    xaxis = list(title = "Proportion", tickformat = ".0%", range = c(0, 1)),
+    yaxis = list(title = "Workforce Category"),
+    legend = list(title = list(text = "Subscribed?"))
+  )
+```
+
+The chart shows that students have the highest subscription rate, followed by retired and unemployed individuals, while employed clients have the lowest. This suggests that non-working groups tend to be more receptive to the campaign than those who are employed.
+
+#### 2.3.2. Call Duration by Subscription Outcome
+I then explored the relationship between call duration and subscription outcome. The density plot below compares how long successful and unsuccessful calls tend to last.
+
+``` {r density-plot}
+p <- ggplot(clean_data, aes(x = duration, color = y, fill = y)) +
+  geom_density(alpha = 0.4) +
+  scale_color_manual(name = "Subscribed?", values = c("no" = "#e51f1f", "yes" = "#44ce1b")) +
+  scale_fill_manual(name = "Subscribed?", values = c("no" = "#e51f1f", "yes" = "#44ce1b")) +
+  scale_x_continuous(limits = c(0, 2000)) +
+  theme_minimal() +
+  labs(
+    title = "Call Duration by Subscription Outcome Density",
+    x = "Call Duration (seconds)",
+    y = "Density"
+  )
+ggplotly(p)
+```
+
+Clients who subscribed ("yes") are generally associated with longer call durations, showing a clear right-skewed distribution that extends well beyond 1500 seconds. In contrast, most unsuccessful calls ("no") cluster around shorter durations, typically under 300 seconds. The overlap in the early duration range indicates that short calls can still result in subscriptions though less frequently. This suggests that longer conversations are positively correlated with successful campaign outcomes, potentially due to more time for persuasion or information exchange.
+<br>
+
+#### 2.2.3. Subscription Rate by Age Group per Month
+To explore how age influences campaign success across time, I examined the monthly subscription rates by age group. This visualization allows for identifying periods when certain age segments were more responsive than other relative to the overall average.
+
+``` {r multi-dimensional-chart}
+threshold <- clean_data %>%
+  group_by(month, age_group) %>%
+  summarise(success_rate = mean(y == "yes"), .groups = "drop") %>%
+  summarise(mean_success = mean(success_rate)) %>%
+  pull(mean_success)
+
+p <- ggplot(clean_data, aes(x = age_group, fill = y)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("no" = "#e51f1f", "yes" = "#44ce1b")) +
+  coord_flip() +
+  facet_wrap(~ month, ncol = 1) +
+  geom_hline(
+    yintercept = threshold,
+    linetype = "solid",
+    color = "gray20"
+  ) +
+  labs(
+    title = "Subscription Rate by Age Group per Month",
+    x = "Age Group",
+    y = "Proportion",
+    fill = "Subscribed?"
+  ) +
+  theme_minimal()
+
+ggplotly(p)
+
+
+```
+**Note:** the solid black line shows the average success rate across all months and age group combinations and treating each group equally regardless of size.
+
+March, September, and October exhibit above-average subscription rates across all three age groups, possibly due to strong campaign relevance or timing. March may align with financial planning for the year, September and October with post-summer re-engagement. December stands out further for high engagement in the 30-50 and >50 age group, likely driven by year-end bonuses or financial reflection typical of this demographic. The other months underperform, possibly because the messaging lacked urgency or failed to align with specific age-group timing, leading to overall weaker response.
+
+## 3. Insight Storytelling and Recommendations
+In this section, I try to translate complex data into a clear narrative that guides business decision-making. Using visual storytelling principles, I've focused on identifying patterns in campaign performance by age group and time of year to discover when and whom marketing efforts are most effective, plus key insight in longer duration calls.
+<br><br>
+
+### 3.1. Data Storytelling Through Visual Design
+
+``` {r data-storytelling1}
+summary_df <- clean_data %>%
+  group_by(month, age_group) %>%
+  summarise(success_rate = mean(y == "yes"), .groups = "drop")
+
+threshold <- mean(summary_df$success_rate, na.rm = TRUE)
+
+p <- ggplot(summary_df, aes(x = month, y = success_rate, group = age_group, color = age_group)) +
+  annotate("rect", xmin = as.numeric(factor("mar", levels = levels(summary_df$month))) - 0.5,
+           xmax = as.numeric(factor("mar", levels = levels(summary_df$month))) + 0.5,
+           ymin = 0, ymax = 1, fill = "lightgreen", alpha = 0.2) +
+  annotate("rect", xmin = as.numeric(factor("sep", levels = levels(summary_df$month))) - 0.5,
+           xmax = as.numeric(factor("sep", levels = levels(summary_df$month))) + 0.5,
+           ymin = 0, ymax = 1, fill = "lightgreen", alpha = 0.2) +
+  annotate("rect", xmin = as.numeric(factor("oct", levels = levels(summary_df$month))) - 0.5,
+           xmax = as.numeric(factor("oct", levels = levels(summary_df$month))) + 0.5,
+           ymin = 0, ymax = 1, fill = "lightgreen", alpha = 0.2) +
+  annotate("rect", xmin = as.numeric(factor("may", levels = levels(summary_df$month))) - 0.5,
+           xmax = as.numeric(factor("jul", levels = levels(summary_df$month))) + 0.5,
+           ymin = 0, ymax = 1, fill = "lightgray", alpha = 0.2) +
+  annotate("rect", xmin = as.numeric(factor("aug", levels = levels(summary_df$month))) - 0.5,
+           xmax = as.numeric(factor("aug", levels = levels(summary_df$month))) + 0.5,
+           ymin = 0, ymax = 1, fill = "lightgray", alpha = 0.2) +
+  annotate("rect", xmin = as.numeric(factor("nov", levels = levels(summary_df$month))) - 0.5,
+           xmax = as.numeric(factor("nov", levels = levels(summary_df$month))) + 0.5,
+           ymin = 0, ymax = 1, fill = "lightgray", alpha = 0.2) +
+  annotate("rect", xmin = as.numeric(factor("dec", levels = levels(summary_df$month))) - 0.5,
+           xmax = as.numeric(factor("dec", levels = levels(summary_df$month))) + 0.5,
+           ymin = 0, ymax = 1, fill = "lightblue", alpha = 0.2) +
+  annotate("rect", xmin = as.numeric(factor("apr", levels = levels(summary_df$month))) - 0.5,
+           xmax = as.numeric(factor("apr", levels = levels(summary_df$month))) + 0.5,
+           ymin = 0, ymax = 1, fill = "lightblue", alpha = 0.2) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = threshold, linetype = "dashed", color = "gray40") +
+  annotate("text", x = 4, y = threshold + 0.03, label = "Overall Average", hjust = 0, size = 3.5, color = "gray40") +
+annotate("segment",
+         x = as.numeric(factor("oct", levels = levels(summary_df$month))) + 0.2,
+         xend = as.numeric(factor("dec", levels = levels(summary_df$month))),
+         y = 0.12, yend = 0,
+         arrow = arrow(type = "closed", length = unit(5, "cm")), color = "red") +
+annotate("text",
+         x = as.numeric(factor("oct", levels = levels(summary_df$month))) - 0.4,
+         y = 0.160, label = "Only 4\nIndividuals", hjust = 1, size = 3.2, color = "red") +
+  scale_color_manual(
+    values = c("<30" = "#4C9BE8", "30-50" = "#FFA500", ">50" = "#228B22")
+  ) +
+  labs(
+    title = "Subscription Rate by Month and Age Group",
+    subtitle = paste("Dashed line shows threshold =", scales::percent(threshold, accuracy = 0.1)),
+    x = "Month",
+    y = "Subscription Rate",
+    color = "Age Group"
+  ) +
+  theme_minimal() +
+annotate("text", x = 2.3, y = 0.94, label = "🟩  Peak Months", hjust = 0, color = "darkgreen", size = 3.2) +
+annotate("text", x = 2.77, y = 0.88, label = "🟦  Targeted Strategy", hjust = 0, color = "steelblue", size = 3.2) +
+annotate("text", x = 2.625, y = 0.82, label = "⬜  Moderate to Low", hjust = 0, color = "gray40", size = 3.2)
+
+ggplotly(p)
+```
+The interactive line chart above showcases a key insight where targeting campaigns in March, September, and October yield consistently high results across all ages.
+<br><br>
+
+``` {r data-storytelling2}
+p <- ggplot(clean_data, aes(x = duration, color = y, fill = y)) +
+  geom_density(alpha = 0.4) +
+  geom_vline(xintercept = 300, linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 500, y = 0.004, label = "300 seconds", angle = 90, vjust = -0.5, size = 3.5) +
+  scale_color_manual(name = "Subscribed?", values = c("no" = "#e51f1f", "yes" = "#44ce1b")) +
+  scale_fill_manual(name = "Subscribed?", values = c("no" = "#e51f1f", "yes" = "#44ce1b")) +
+  scale_x_continuous(limits = c(0, 2000)) +
+  theme_minimal() +
+  labs(
+    title = "Call Duration by Subscription Outcome Density",
+    x = "Call Duration (seconds)",
+    y = "Density"
+  )
+
+ggplotly(p)
+```
+The interactive chart above highlights another key insight where clients who ended up subscribing generally had longer call duration, staying on the line beyond 300 seconds significantly increases the likelihood of a successful outcome. 
+
+### 3.2. Findings Interpretation
+From my analysis, I noticed that March, September, and October show the highest subscription rates across all age groups, likely aligning with times when people are more open to financial planning, such as the start or end of the year. Older clients respond especially well in December, possibly due to retirement planning. While the subscription rate for younger clients drops to zero in December, this is based on only four individuals, so it should not be overinterpreted.
+
+Moving on, clients who subscribe typically stay on the call for over five minutes, suggesting that longer conversations are linked to higher success.
+
+These patterns highlight when and how to engage more effectively, but we should keep in mind that external factors like holidays or the economy may also play a role.
+<br><br>
+
+### 3.3. Business Recommendations
+Based on those insights, there are two specific data-driven business recommendations that I can give:
+
+1. *Prioritize campaign launches in March, September, and October across all age segments*. These months consistently showed above-average subscription rates for every age group, indicating optimal timing for engagement. The company should allocate more resources to campaign efforts during these periods to maximize returns across the board.
+2. *Invest in strategies that encourage longer call duration*. Clients who eventually subscribe typically stay on the line for over 5 minutes, indicating that sustained, meaningful conversations are a strong predictor of success. Training call agents to build rapport and guide longer discussions may significantly boost conversion rates.
