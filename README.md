@@ -1,4 +1,4 @@
-This repo includes commercial bank marketing campaign data analysis in R to identify data quality issues, customer response patterns, and campaign performance trends.
+Performed commercial bank marketing campaign data analysis in R to identify data quality issues, customer response patterns, and campaign performance trends.
 
 Key work:
 - Performed data quality assessment covering missing values, duplicates, inconsistent categories, outliers, and noisy values.
